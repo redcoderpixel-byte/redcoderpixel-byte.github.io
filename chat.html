@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="it">
+<meta charset="utf-8">
+<title>Chat P2P – Codice identico</title>
+<style>
+  :root{--bg:#111;--fg:#eee;--card:#222;--accent:#0af;--ok:#6f6;--err:#f66}
+  body.light{--bg:#f5f5f5;--fg:#222;--card:#fff;--accent:#08c}
+  body{font:16px/1.4 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;margin:0;background:var(--bg);color:var(--fg);display:flex;flex-direction:column;height:100vh}
+  header{background:var(--card);padding:.6rem 1rem;display:flex;align-items:center;gap:.6rem;flex-wrap:wrap}
+  input[type=text]{flex:1;padding:.4rem .6rem;border:none;border-radius:4px;background:var(--bg);color:var(--fg)}
+  button{padding:.4rem .8rem;border:none;border-radius:4px;background:var(--accent);color:#fff;cursor:pointer}
+  button:disabled{background:#777}
+  #log{flex:1;overflow-y:auto;padding:.6rem 1rem;white-space:pre-wrap}
+  #form{display:flex;padding:.6rem 1rem;gap:.4rem;background:var(--card)}
+  #form input{flex:1}
+  .ok{color:var(--ok)} .err{color:var(--err)}
+  #tema{margin-left:auto}
+</style>
+<body>
+<header>
+  <span>Codice stanza:</span>
+  <input id="codice" placeholder="Crea o incolla codice">
+  <button onclick="entra()">Entra</button>
+  <button id="tema" onclick="toggleTema()">🌙</button>
+</header>
+<div id="log"></div>
+<form id="form">
+  <input id="msg" placeholder="Scrivi…" disabled>
+  <button id="invia" disabled>Invia</button>
+</form>
+
+<script src="https://cdn.jsdelivr.net/npm/gun@0.2020.1239/gun.js"></script>
+<script>
+/* ---------- utilità ---------- */
+const $=q=>document.querySelector(q);
+const log=(t,cls='')=>{const d=document.createElement('div');d.textContent=t;d.className=cls;$('#log').appendChild(d);$('#log').scrollTop=1e9;};
+const audio=new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSuBzvLZiTYIG2m98OScTgwOUarm7blmFgU7k9n1unEiBC13yO/eizEIHWq+8+OWT');
+
+/* ---------- tema ---------- */
+if(localStorage.tema==='light')document.body.classList.add('light');
+function toggleTema(){
+  document.body.classList.toggle('light');
+  localStorage.tema=document.body.classList.contains('light')?'light':'dark';
+  $('#tema').textContent=document.body.classList.contains('light')?'☀️':'🌙';
+}
+
+/* ---------- GUN ---------- */
+const gun=Gun('https://gun-manhattan.herokuapp.com/gun');
+let pc,canaleDat,codiceStanza;
+
+function entra(){
+  codiceStanza=$('#codice').value.trim().toUpperCase();
+  if(!codiceStanza){log('Inserisci un codice!','err');return;}
+  log('Stanza: '+codiceStanza);
+  inizia();
+}
+
+/* ---------- WebRTC ---------- */
+const cfg={iceServers:[{urls:'stun:stun.l.google.com:19302'}]};
+
+function inizia(){
+  pc=new RTCPeerConnection(cfg);
+  canaleDat=pc.createDataChannel('chat',{ordered:true});
+  canaleDat.onopen=()=>{log('🟢 Connesso!','ok');abilita(true);audio.play();};
+  canaleDat.onmessage=e=>{log('Amico: '+e.data);audio.play();};
+  canaleDat.onclose=()=>{log('🔴 Chiuso','err');abilita(false);};
+  pc.onicecandidate=e=>{if(e.candidate)return;pubblica();};
+  pc.ondatachannel=e=>{
+    canaleDat=e.channel;
+    canaleDat.onopen=()=>{log('🟢 Connesso!','ok');abilita(true);};
+    canaleDat.onmessage=e=>{log('Amico: '+e.data);audio.play();};
+    canaleDat.onclose=()=>{log('🔴 Chiuso','err');abilita(false);};
+  };
+  const room=gun.get('chatp2p_'+codiceStanza);
+  room.on(async data=>{
+    if(!data||!data.desc)return;
+    const d=JSON.parse(data.desc);
+    if(d.type==='offer'&&pc.signalingState==='stable'){
+      await pc.setRemoteDescription(d);
+      const risp=await pc.createAnswer();
+      await pc.setLocalDescription(risp);
+      pubblica();
+    }else if(d.type==='answer'&&pc.signalingState==='have-local-offer'){
+      await pc.setRemoteDescription(d);
+    }
+  });
+  pc.createOffer().then(o=>pc.setLocalDescription(o)).then(pubblica);
+  function pubblica(){
+    const desc=JSON.stringify({sdp:pc.localDescription.sdp,type:pc.localDescription.type});
+    gun.get('chatp2p_'+codiceStanza).put({desc});
+  }
+}
+
+function abilita(yes){
+  $('#msg').disabled=!yes;
+  $('#invia').disabled=!yes;
+}
+
+/* ---------- chat ---------- */
+$('#form').onsubmit=e=>{
+  e.preventDefault();
+  const m=$('#msg').value.trim();
+  if(!m)return;
+  canaleDat.send(m);
+  log('Tu: '+m);
+  $('#msg').value='';
+};
+</script>
+</body>
+</html>
